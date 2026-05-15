@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashai | Gestão Dinâmica</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@200;400;600;800&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #f8fafc; color: #1e293b; }
+        .card { background: white; border-radius: 1.5rem; border: 1px solid #e2e8f0; transition: all 0.3s ease; }
+        .title-bold { font-weight: 800; text-transform: uppercase; font-style: italic; color: #4f46e5; }
+        .kpi-value { font-weight: 800; letter-spacing: -2px; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="flex flex-col md:flex-row justify-between items-center mb-6 gap-6 bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
+            <div>
+                <h1 class="text-4xl leading-tight">
+                    <span class="font-light">Dashboard</span> <span class="title-bold">Dinâmico</span>
+                </h1>
+                <p id="statusFile" class="text-slate-400 font-medium text-sm mt-1 italic">Aguardando planilha...</p>
+            </div>
+            <label class="bg-indigo-600 hover:bg-indigo-700 text-white px-10 py-4 rounded-2xl shadow-xl cursor-pointer transition-all font-bold flex items-center gap-3 transform hover:scale-105">
+                <i class="fas fa-upload text-2xl"></i> ATUALIZAR PLANILHA
+                <input type="file" id="excelInput" class="hidden" accept=".xlsx, .xls, .csv">
+            </label>
+        </header>
+
+        <div id="dashArea" class="hidden">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div class="card p-5 border-t-4 border-indigo-500">
+                    <p class="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest italic">Regional</p>
+                    <select id="selReg" onchange="filterData()" class="w-full p-2.5 bg-slate-50 rounded-xl font-bold outline-none"></select>
+                </div>
+                <div class="card p-5 border-t-4 border-blue-500">
+                    <p class="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest italic">Loja / Unidade</p>
+                    <select id="selLoja" onchange="filterData()" class="w-full p-2.5 bg-slate-50 rounded-xl font-bold outline-none"></select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="card p-6 shadow-md border-l-8 border-indigo-600">
+                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Pendente</p>
+                    <h2 id="kpiTotal" class="text-5xl kpi-value text-slate-800">0</h2>
+                </div>
+                <div class="card p-6 shadow-md border-l-8 border-rose-600">
+                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Maior Atraso (Dias)</p>
+                    <h2 id="kpiMaiorAtraso" class="text-5xl kpi-value text-rose-600">0</h2>
+                </div>
+                <div class="card p-6 shadow-md border-l-8 border-amber-500">
+                    <p class="text-[10px] font-black text-slate-400 uppercase mb-1">Filtro Ativo</p>
+                    <h2 id="kpiCritica" class="text-xl font-extrabold text-slate-700 truncate mt-2">GERAL</h2>
+                </div>
+            </div>
+
+            <div class="card p-8 shadow-sm mb-8">
+                <h3 id="chartTitle" class="font-black text-slate-800 uppercase text-[10px] mb-8 tracking-widest italic border-b pb-2">Análise por Volume</h3>
+                <div class="h-[400px]">
+                    <canvas id="mainChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div id="welcome" class="text-center py-40 bg-white rounded-[3rem] border-4 border-dashed border-slate-100">
+            <i class="fas fa-file-excel text-indigo-100 text-8xl mb-6"></i>
+            <h2 class="text-2xl font-bold text-slate-300 uppercase tracking-tighter">Suba a planilha atualizada para carregar o Dashboard</h2>
+        </div>
+    </div>
+
+    <script>
+        let db = [];
+        let myChart;
+        const colorPalette = ['#6366f1', '#f43f5e', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#fb923c', '#475569'];
+
+        document.getElementById('excelInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            document.getElementById('statusFile').innerText = `Processando: ${file.name}`;
+            
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                const data = evt.target.result;
+                const workbook = XLSX.read(data, { type: 'binary' });
+                const sheetName = workbook.SheetNames[0]; // Pega sempre a primeira aba
+                const json = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+                // Limpa banco anterior e normaliza dados
+                db = json.map(row => {
+                    const r = {};
+                    for (let key in row) {
+                        const normKey = key.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                        r[normKey] = row[key];
+                    }
+                    return r;
+                }).filter(r => r.Regional);
+
+                if(db.length > 0) {
+                    document.getElementById('welcome').classList.add('hidden');
+                    document.getElementById('dashArea').classList.remove('hidden');
+                    resetFilters();
+                    populateFilters();
+                    filterData();
+                }
+            };
+            reader.readAsBinaryString(file);
+        });
+
+        function resetFilters() {
+            document.getElementById('selReg').value = "TODAS";
+            document.getElementById('selLoja').innerHTML = '<option value="TODAS">Selecione a Regional</option>';
+        }
+
+        function populateFilters() {
+            const regSel = document.getElementById('selReg');
+            const regs = [...new Set(db.map(r => r.Regional))].sort();
+            regSel.innerHTML = '<option value="TODAS">🌍 Todas as Regionais</option>';
+            regs.forEach(r => regSel.add(new Option(r, r)));
+        }
+
+        function filterData() {
+            const reg = document.getElementById('selReg').value;
+            const lojaSel = document.getElementById('selLoja');
+            let filtered = db;
+
+            if(reg !== "TODAS") {
+                filtered = db.filter(r => r.Regional === reg);
+                const lojas = [...new Set(filtered.map(r => r.Loja || r.Centro))].sort();
+                
+                // Só atualiza a lista de lojas se mudar a regional
+                if (lojaSel.getAttribute('data-last-reg') !== reg) {
+                    lojaSel.innerHTML = '<option value="TODAS">🏢 Todas as Lojas</option>';
+                    lojas.forEach(l => lojaSel.add(new Option(l, l)));
+                    lojaSel.setAttribute('data-last-reg', reg);
+                }
+                lojaSel.disabled = false;
+            } else {
+                lojaSel.innerHTML = '<option value="TODAS">Filtre a Regional primeiro</option>';
+                lojaSel.disabled = true;
+            }
+
+            if(lojaSel.value !== "TODAS" && lojaSel.value !== "") {
+                filtered = filtered.filter(r => (r.Loja || r.Centro) === lojaSel.value);
+            }
+
+            updateDashboard(filtered, reg, lojaSel.value);
+        }
+
+        function updateDashboard(data, regVal, lojaVal) {
+            // Atualiza KPIs
+            document.getElementById('kpiTotal').innerText = data.length.toLocaleString();
+            const atrasos = data.map(r => Math.abs(parseInt(r['Dias sem comprovante']) || 0));
+            document.getElementById('kpiMaiorAtraso').innerText = atrasos.length > 0 ? Math.max(...atrasos) : 0;
+            document.getElementById('kpiCritica').innerText = lojaVal !== "TODAS" ? lojaVal : (regVal !== "TODAS" ? regVal : "GERAL");
+
+            // Lógica do Gráfico Dinâmico
+            let labels = [];
+            let values = [];
+
+            if (regVal === "TODAS") {
+                const counts = {};
+                db.forEach(r => counts[r.Regional] = (counts[r.Regional] || 0) + 1);
+                labels = Object.keys(counts);
+                values = Object.values(counts);
+            } else {
+                const counts = {};
+                data.forEach(r => {
+                    const key = r.Loja || r.Centro;
+                    counts[key] = (counts[key] || 0) + 1;
+                });
+                labels = Object.keys(counts);
+                values = Object.values(counts);
+            }
+
+            renderChart(labels, values);
+        }
+
+        function renderChart(labels, values) {
+            const ctx = document.getElementById('mainChart').getContext('2d');
+            if(myChart) myChart.destroy();
+            
+            myChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: values,
+                        backgroundColor: colorPalette,
+                        borderRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#f1f5f9' } },
+                        x: { grid: { display: false } }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
